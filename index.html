@@ -123,7 +123,7 @@
   </aside>
 
   <script>
-    // --- Advanced Procedural Sound Effects Synthesizer using Web Audio API ---
+    // --- Hyper-Realistic Procedural Foley Sound Engine using Web Audio API ---
     class SoundEngine {
       constructor() {
         this.ctx = null;
@@ -140,189 +140,193 @@
         }
       }
 
-      // Hard glass collision clink
+      // 瓶同士やテーブルとの硬質な軽い衝突音（「コツッ」「コッ」）
       playClink(intensity = 1.0) {
         if (!this.enabled || !this.ctx) return;
-        const now = this.ctx.currentTime;
-        const osc = this.ctx.createOscillator();
+        const sr = this.ctx.sampleRate;
+        const dur = 0.045; // 極めて短くしてシンバル化を防止
+        const len = Math.floor(sr * dur);
+        const buf = this.ctx.createBuffer(1, len, sr);
+        const data = buf.getChannelData(0);
+
+        // 鈍いガラスの「コツッ」という打撃音
+        for (let i = 0; i < len; i++) {
+          const t = i / sr;
+          const hitNoise = (Math.random() * 2 - 1) * Math.exp(-t / 0.002);
+          const thud = Math.sin(2 * Math.PI * 320 * t) * Math.exp(-t / 0.012);
+          const click = Math.sin(2 * Math.PI * 1850 * t) * Math.exp(-t / 0.006) * 0.4;
+          data[i] = Math.tanh((hitNoise * 0.6 + thud * 0.8 + click) * Math.min(intensity, 1.2));
+        }
+
+        const src = this.ctx.createBufferSource();
+        src.buffer = buf;
         const gain = this.ctx.createGain();
-        
-        osc.type = 'sine';
-        const freqs = [1900, 2600, 3400, 4800];
-        osc.frequency.setValueAtTime(freqs[Math.floor(Math.random() * freqs.length)], now);
-        osc.frequency.exponentialRampToValueAtTime(1400, now + 0.08);
-
-        gain.gain.setValueAtTime(Math.min(0.4 * intensity, 0.5), now);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
-
-        osc.connect(gain);
+        gain.gain.setValueAtTime(Math.min(0.4 * intensity, 0.6), this.ctx.currentTime);
+        src.connect(gain);
         gain.connect(this.ctx.destination);
-        osc.start(now);
-        osc.stop(now + 0.12);
+        src.start();
       }
 
-      // Secondary small shard bounce / rattle clink
-      playShardTinkle(timeOffset = 0, volume = 0.08) {
-        if (!this.enabled || !this.ctx) return;
-        const t = this.ctx.currentTime + timeOffset;
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.type = 'triangle';
-        const f = 2500 + Math.random() * 4500;
-        osc.frequency.setValueAtTime(f, t);
-        osc.frequency.exponentialRampToValueAtTime(f * 0.8, t + 0.06);
-
-        gain.gain.setValueAtTime(volume, t);
-        gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
-
-        osc.connect(gain);
-        gain.connect(this.ctx.destination);
-        osc.start(t);
-        osc.stop(t + 0.07);
-      }
-
-      // Multi-layered Hyper-Realistic Glass Shatter & Liquid/Salt Impact
+      // 本物のガラス瓶が粉砕したときの完全音響（シンバル感を徹底排除）
       playShatter(isSoySauce = true, impactSpeed = 4.0) {
         if (!this.enabled || !this.ctx) return;
-        const now = this.ctx.currentTime;
-        const intensity = Math.min(Math.max((impactSpeed - 3.0) / 4.0, 0.6), 1.8);
+        const sr = this.ctx.sampleRate;
+        const duration = 0.75;
+        const length = Math.floor(sr * duration);
+        const buffer = this.ctx.createBuffer(2, length, sr);
+        const left = buffer.getChannelData(0);
+        const right = buffer.getChannelData(1);
 
-        // 1. Heavy Low Impact Thud (Table/Wall structural shock)
-        const thudOsc = this.ctx.createOscillator();
-        const thudGain = this.ctx.createGain();
-        thudOsc.type = 'sine';
-        thudOsc.frequency.setValueAtTime(160, now);
-        thudOsc.frequency.exponentialRampToValueAtTime(32, now + 0.14);
-        thudGain.gain.setValueAtTime(0.7 * intensity, now);
-        thudGain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
-        thudOsc.connect(thudGain);
-        thudGain.connect(this.ctx.destination);
-        thudOsc.start(now);
-        thudOsc.stop(now + 0.2);
+        const intensity = Math.min(Math.max((impactSpeed - 2.5) / 4.0, 0.7), 1.8);
 
-        // 2. Ultra-sharp Glass Crack & Burst (High-pass filtered burst)
-        const crackLen = this.ctx.sampleRate * 0.35;
-        const crackBuf = this.ctx.createBuffer(1, crackLen, this.ctx.sampleRate);
-        const crackOut = crackBuf.getChannelData(0);
-        for (let i = 0; i < crackLen; i++) {
-          crackOut[i] = (Math.random() * 2 - 1) * Math.exp(-i / (crackLen * 0.12));
-        }
-        const crackSrc = this.ctx.createBufferSource();
-        crackSrc.buffer = crackBuf;
-
-        const crackFilter = this.ctx.createBiquadFilter();
-        crackFilter.type = 'bandpass';
-        crackFilter.frequency.setValueAtTime(3400, now);
-        crackFilter.Q.setValueAtTime(1.5, now);
-
-        const crackGain = this.ctx.createGain();
-        crackGain.gain.setValueAtTime(0.9 * intensity, now);
-        crackGain.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
-
-        crackSrc.connect(crackFilter);
-        crackFilter.connect(crackGain);
-        crackGain.connect(this.ctx.destination);
-        crackSrc.start(now);
-
-        // 3. Resonant Glass Shivering Tines (Glass bells vibrating in agony)
-        const glassHarmonics = [3120, 4680, 6240, 8100, 10400];
-        glassHarmonics.forEach((freq, idx) => {
-          const osc = this.ctx.createOscillator();
-          const g = this.ctx.createGain();
-          osc.type = idx % 2 === 0 ? 'sine' : 'triangle';
-          osc.frequency.setValueAtTime(freq * (0.97 + Math.random() * 0.06), now);
-          osc.frequency.exponentialRampToValueAtTime(freq * 0.65, now + 0.45);
-
-          const startGain = (0.28 / (idx + 1)) * intensity;
-          g.gain.setValueAtTime(startGain, now);
-          g.gain.exponentialRampToValueAtTime(0.0002, now + 0.3 + idx * 0.08);
-
-          osc.connect(g);
-          g.connect(this.ctx.destination);
-          osc.start(now);
-          osc.stop(now + 0.65);
-        });
-
-        // 4. Cascade of Tiny Shards Raining Down (The signature "Chara-chara-tin!" glass sound)
-        const tinkleCount = 14 + Math.floor(Math.random() * 8);
-        for (let s = 0; s < tinkleCount; s++) {
-          const delay = 0.04 + (s / tinkleCount) * 0.45 + Math.random() * 0.05;
-          const vol = (0.12 - (s / tinkleCount) * 0.07) * intensity;
-          this.playShardTinkle(delay, Math.max(0.015, vol));
+        // 破片がテーブル上をバラバラと散らばる粒度イベント（金属的な響きではなく「チャラ…カチッ」）
+        const pebbleCount = 35;
+        const pebbles = [];
+        for (let p = 0; p < pebbleCount; p++) {
+          pebbles.push({
+            time: 0.015 + Math.pow(Math.random(), 1.8) * 0.55,
+            decay: 0.002 + Math.random() * 0.006, // 極めて短小（2〜8ms）でシンバル化させない
+            freq1: 1800 + Math.random() * 2400,
+            freq2: 3200 + Math.random() * 2800,
+            amp: (0.15 + Math.random() * 0.25) * (1 - p / pebbleCount * 0.5),
+            pan: Math.random() * 2 - 1
+          });
         }
 
-        // 5. Contents Impact: Wet Soy Splash OR Powdery Salt Burst
-        if (isSoySauce) {
-          // Wet slosh/splat
-          const splatLen = this.ctx.sampleRate * 0.4;
-          const splatBuf = this.ctx.createBuffer(1, splatLen, this.ctx.sampleRate);
-          const splatOut = splatBuf.getChannelData(0);
-          for (let k = 0; k < splatLen; k++) {
-            splatOut[k] = (Math.random() * 2 - 1) * Math.exp(-k / (splatLen * 0.22));
+        // 液体・粉末用のランダムシード
+        let lpfL = 0, lpfR = 0;
+
+        for (let i = 0; i < length; i++) {
+          const t = i / sr;
+          let sL = 0;
+          let sR = 0;
+
+          // 1. 【激突の重い木製・壁面インパクト過渡音（ドスッ／バシッ）】
+          if (t < 0.08) {
+            const bodyEnv = Math.exp(-t / 0.016);
+            // 急速ピッチダウンする低音の質量塊衝撃
+            const fImpact = 160 * Math.exp(-t * 80) + 45;
+            const thump = Math.sin(2 * Math.PI * fImpact * t) * bodyEnv * 1.2;
+            // 激突瞬間の瞬間的な木材・壁面の打撃ノイズ
+            const wallCrush = (Math.random() * 2 - 1) * Math.exp(-t / 0.004) * 0.8;
+            sL += thump + wallCrush;
+            sR += thump + wallCrush;
           }
-          const splatSrc = this.ctx.createBufferSource();
-          splatSrc.buffer = splatBuf;
 
-          const splatFilter = this.ctx.createBiquadFilter();
-          splatFilter.type = 'lowpass';
-          splatFilter.frequency.setValueAtTime(950, now);
-          splatFilter.frequency.linearRampToValueAtTime(300, now + 0.35);
-
-          const splatGain = this.ctx.createGain();
-          splatGain.gain.setValueAtTime(0.65 * intensity, now);
-          splatGain.gain.exponentialRampToValueAtTime(0.001, now + 0.36);
-
-          splatSrc.connect(splatFilter);
-          splatFilter.connect(splatGain);
-          splatGain.connect(this.ctx.destination);
-          splatSrc.start(now);
-        } else {
-          // Powdery salt spread hiss
-          const saltLen = this.ctx.sampleRate * 0.55;
-          const saltBuf = this.ctx.createBuffer(1, saltLen, this.ctx.sampleRate);
-          const saltOut = saltBuf.getChannelData(0);
-          for (let m = 0; m < saltLen; m++) {
-            saltOut[m] = (Math.random() * 2 - 1) * Math.exp(-m / (saltLen * 0.3));
+          // 2. 【ガラス破断の鋭い破裂アタック（パリンッ！）】
+          // ※持続するサイン波を完全に排除し、0.015秒以内の非調和な破断ショックウェーブのみ
+          if (t < 0.035) {
+            const crackEnv = Math.exp(-t / 0.006); // 6msで急速急減衰
+            // 急激な亀裂のインパルス（ポアソンインパルス）
+            const snap = (Math.random() > 0.5 ? 1 : -1) * crackEnv * 1.5;
+            // 瓶が割れる一瞬だけの鋭利な摩擦
+            const tear = (Math.random() * 2 - 1) * crackEnv * 0.9;
+            sL += snap + tear;
+            sR += snap * 0.85 + (Math.random() * 2 - 1) * crackEnv * 0.8;
           }
-          const saltSrc = this.ctx.createBufferSource();
-          saltSrc.buffer = saltBuf;
 
-          const saltFilter = this.ctx.createBiquadFilter();
-          saltFilter.type = 'bandpass';
-          saltFilter.frequency.setValueAtTime(5200, now);
-          saltFilter.Q.setValueAtTime(2.2, now);
+          // 3. 【割れた後の破片がテーブルを滑り・跳ねる微細音（チャララッ…パラッ）】
+          for (let p = 0; p < pebbles.length; p++) {
+            const pb = pebbles[p];
+            const dt = t - pb.time;
+            if (dt >= 0 && dt < 0.018) {
+              const env = Math.exp(-dt / pb.decay);
+              // 2つの近接周波数が一瞬干渉して消える「カチッ」「チッ」という硬質ガラス小片音
+              const grain = (Math.sin(2 * Math.PI * pb.freq1 * dt) * 0.6 + 
+                             Math.sin(2 * Math.PI * pb.freq2 * dt) * 0.4) * env * pb.amp;
+              const panL = 0.5 * (1 - pb.pan);
+              const panR = 0.5 * (1 + pb.pan);
+              sL += grain * panL;
+              sR += grain * panR;
+            }
+          }
 
-          const saltGain = this.ctx.createGain();
-          saltGain.gain.setValueAtTime(0.45 * intensity, now);
-          saltGain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+          // 4. 【内容物の飛散音】
+          if (isSoySauce) {
+            // 醤油の飛び散り（ドチャッ・ビシャッ）
+            if (t > 0.005 && t < 0.16) {
+              const wetEnv = Math.exp(-(t - 0.005) / 0.035);
+              const wetNoise = (Math.random() * 2 - 1) * wetEnv * 0.7;
+              lpfL += 0.28 * (wetNoise - lpfL);
+              lpfR += 0.28 * (wetNoise - lpfR);
+              sL += lpfL;
+              sR += lpfR;
+            }
+          } else {
+            // 塩の散乱（ザザーッ・サラサラ）
+            if (t > 0.008 && t < 0.35) {
+              const saltEnv = Math.sin((t - 0.008) / 0.342 * Math.PI) * Math.exp(-t * 3.8);
+              const saltNoise = (Math.random() * 2 - 1) * saltEnv * 0.5;
+              sL += saltNoise;
+              sR += (Math.random() * 2 - 1) * saltEnv * 0.5;
+            }
+          }
 
-          saltSrc.connect(saltFilter);
-          saltFilter.connect(saltGain);
-          saltGain.connect(this.ctx.destination);
-          saltSrc.start(now);
+          // アナログリミッター＆温かみのあるサチュレーション
+          const totalL = sL * intensity;
+          const totalR = sR * intensity;
+          left[i] = Math.tanh(totalL);
+          right[i] = Math.tanh(totalR);
         }
+
+        const src = this.ctx.createBufferSource();
+        src.buffer = buffer;
+        src.connect(this.ctx.destination);
+        src.start();
       }
 
-      // Whoosh sound when throwing
+      // 投擲時の空気の乱流風切り音
       playWhoosh(velocity) {
         if (!this.enabled || !this.ctx) return;
-        const now = this.ctx.currentTime;
-        const osc = this.ctx.createOscillator();
+        const sr = this.ctx.sampleRate;
+        const dur = 0.22;
+        const len = Math.floor(sr * dur);
+        const buf = this.ctx.createBuffer(1, len, sr);
+        const data = buf.getChannelData(0);
+
+        const vFactor = Math.min(Math.max((velocity - 2.0) / 6.0, 0.4), 1.5);
+        let filterVal = 0;
+
+        for (let i = 0; i < len; i++) {
+          const t = i / sr;
+          const env = Math.sin((t / dur) * Math.PI);
+          const noise = (Math.random() * 2 - 1) * env;
+          filterVal += 0.07 * (noise - filterVal);
+          data[i] = Math.tanh(filterVal * 1.8 * vFactor);
+        }
+
+        const src = this.ctx.createBufferSource();
+        src.buffer = buf;
+        src.connect(this.ctx.destination);
+        src.start();
+      }
+
+      // テーブルを転がる微細片の「チッ」「コツッ」という超小音
+      playShardTinkle(delay = 0, intensity = 0.05) {
+        if (!this.enabled || !this.ctx) return;
+        const sr = this.ctx.sampleRate;
+        const dur = 0.015; // 15msで完全に減衰（シンバル反響を完全遮断）
+        const len = Math.floor(sr * dur);
+        const buf = this.ctx.createBuffer(1, len, sr);
+        const data = buf.getChannelData(0);
+
+        const freq = 2200 + Math.random() * 1800;
+
+        for (let i = 0; i < len; i++) {
+          const t = i / sr;
+          const env = Math.exp(-t / 0.003);
+          const noise = (Math.random() * 2 - 1) * 0.4;
+          const tone = Math.sin(2 * Math.PI * freq * t) * 0.6;
+          data[i] = (noise + tone) * env * Math.min(intensity, 0.2);
+        }
+
+        const src = this.ctx.createBufferSource();
+        src.buffer = buf;
         const gain = this.ctx.createGain();
-
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(150, now);
-        osc.frequency.exponentialRampToValueAtTime(380, now + 0.12);
-        osc.frequency.exponentialRampToValueAtTime(90, now + 0.25);
-
-        gain.gain.setValueAtTime(0.01, now);
-        gain.gain.linearRampToValueAtTime(Math.min(0.2, velocity * 0.01), now + 0.08);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
-
-        osc.connect(gain);
+        gain.gain.setValueAtTime(0.25, this.ctx.currentTime);
+        src.connect(gain);
         gain.connect(this.ctx.destination);
-        osc.start(now);
-        osc.stop(now + 0.3);
+        src.start(this.ctx.currentTime + Math.max(0, delay));
       }
     }
 
@@ -1065,12 +1069,12 @@
         ctx.arc(cx, cy, 190, 0, Math.PI * 2);
         ctx.fill();
 
-        // Salt specs
+        // Little salt speckles around
         ctx.fillStyle = '#ffffff';
-        for (let s = 0; s < 120; s++) {
+        for (let s = 0; s < 90; s++) {
           const a = Math.random() * Math.PI * 2;
-          const r = Math.random() * 220;
-          ctx.fillRect(cx + Math.cos(a) * r, cy + Math.sin(a) * r, 3, 3);
+          const r = Math.random() * 210;
+          ctx.fillRect(cx + Math.cos(a) * r, cy + Math.sin(a) * r, 2 + Math.random() * 3, 2 + Math.random() * 3);
         }
       }
 
