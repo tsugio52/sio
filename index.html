@@ -1,0 +1,1540 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>調味料ボトル破壊シミュレーター - Glass Seasoning Smash</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Three.js CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <!-- Cannon.js CDN for Physics -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+      background-color: #0f1115;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+    canvas#webgl-canvas {
+      width: 100vw;
+      height: 100vh;
+      display: block;
+    }
+    .hud-glass {
+      background: rgba(18, 22, 34, 0.72);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    }
+    .text-glow {
+      text-shadow: 0 0 12px rgba(255, 107, 43, 0.6);
+    }
+    .hit-flash {
+      animation: flash-anim 0.3s cubic-bezier(0.1, 0.9, 0.2, 1) forwards;
+    }
+    @keyframes flash-anim {
+      0% { opacity: 0.7; transform: scale(1.1); }
+      100% { opacity: 0; transform: scale(1); }
+    }
+  </style>
+</head>
+<body class="relative w-screen h-screen">
+
+  <!-- 3D Canvas -->
+  <canvas id="webgl-canvas"></canvas>
+
+  <!-- Impact Flash Overlay -->
+  <div id="flash-overlay" class="absolute inset-0 bg-white pointer-events-none opacity-0 transition-opacity duration-150"></div>
+
+  <!-- Main Top Bar HUD -->
+  <header class="absolute top-4 left-4 right-4 flex items-center justify-between pointer-events-none z-10">
+    <div class="hud-glass rounded-2xl px-5 py-3 pointer-events-auto flex items-center gap-3">
+      <div class="w-3 h-3 rounded-full bg-red-500 animate-pulse"></div>
+      <div>
+        <h1 class="text-sm md:text-base font-bold text-white tracking-wide flex items-center gap-2">
+          <span>卓上調味料クラッシャー</span>
+          <span class="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">Physics 3D</span>
+        </h1>
+        <p class="text-xs text-slate-300 hidden sm:block">ボトルをドラッグ＆スワイプして勢いよく壁や床に叩きつけろ！</p>
+      </div>
+    </div>
+
+    <!-- Score & Stats -->
+    <div class="hud-glass rounded-2xl px-4 py-2 pointer-events-auto flex items-center gap-4 text-center">
+      <div>
+        <div class="text-[10px] text-slate-400 font-bold uppercase tracking-wider">破砕数</div>
+        <div id="stat-smashed" class="text-lg md:text-xl font-black text-amber-400 font-mono">0</div>
+      </div>
+      <div class="w-[1px] h-7 bg-white/10"></div>
+      <div>
+        <div class="text-[10px] text-slate-400 font-bold uppercase tracking-wider">破片数</div>
+        <div id="stat-shards" class="text-lg md:text-xl font-black text-sky-400 font-mono">0</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Impact Hit Message Banner -->
+  <div id="smash-banner" class="absolute top-28 left-1/2 -translate-x-1/2 pointer-events-none transition-all duration-300 opacity-0 transform -translate-y-4 scale-90 z-20">
+    <div class="px-6 py-2.5 rounded-full bg-gradient-to-r from-red-600/90 via-amber-600/90 to-orange-500/90 text-white font-black text-xl md:text-2xl shadow-2xl tracking-widest border border-amber-300/40 text-glow flex items-center gap-2">
+      <span id="smash-banner-text">CRASH!</span>
+    </div>
+  </div>
+
+  <!-- Trajectory Crosshair & Aim Helper -->
+  <div id="aim-indicator" class="absolute pointer-events-none hidden z-10 -translate-x-1/2 -translate-y-1/2">
+    <div class="w-12 h-12 rounded-full border-2 border-dashed border-amber-400/80 animate-spin"></div>
+    <div class="w-2 h-2 rounded-full bg-red-500 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"></div>
+  </div>
+
+  <!-- Bottom Control Toolbar -->
+  <nav class="absolute bottom-5 left-1/2 -translate-x-1/2 flex items-center gap-2 md:gap-3 hud-glass rounded-2xl p-2 z-10 max-w-[95vw] overflow-x-auto">
+    <button id="btn-spawn-soy" class="flex items-center gap-1.5 px-3 py-2 md:px-4 md:py-2.5 rounded-xl bg-amber-950/60 hover:bg-amber-800/60 border border-amber-700/50 text-white text-xs md:text-sm font-semibold transition active:scale-95 shadow">
+      <span class="w-3 h-3 rounded-full bg-red-600 shadow-sm inline-block"></span>
+      <span>醤油差し追加</span>
+    </button>
+    <button id="btn-spawn-salt" class="flex items-center gap-1.5 px-3 py-2 md:px-4 md:py-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 border border-slate-500/40 text-white text-xs md:text-sm font-semibold transition active:scale-95 shadow">
+      <span class="w-3 h-3 rounded-full bg-slate-200 shadow-sm inline-block"></span>
+      <span>塩入れ追加</span>
+    </button>
+    <div class="w-[1px] h-6 bg-white/15"></div>
+    <button id="btn-slowmo" class="px-3 py-2 md:px-4 md:py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-white text-xs md:text-sm font-semibold transition active:scale-95 flex items-center gap-1.5">
+      <span id="slowmo-icon">⏱️</span>
+      <span id="slowmo-text">スロー: OFF</span>
+    </button>
+    <button id="btn-clean" class="px-3 py-2 md:px-4 md:py-2.5 rounded-xl bg-red-500/20 hover:bg-red-500/40 border border-red-400/30 text-red-200 text-xs md:text-sm font-semibold transition active:scale-95 flex items-center gap-1.5">
+      <span>🧹</span>
+      <span>テーブル清掃</span>
+    </button>
+    <button id="btn-audio" class="p-2 md:p-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-white text-xs md:text-sm transition active:scale-95" title="サウンド切替">
+      <span id="audio-icon">🔊</span>
+    </button>
+  </nav>
+
+  <!-- Help floating tip -->
+  <aside class="absolute bottom-20 left-4 text-xs text-slate-400/80 hud-glass px-3 py-2 rounded-xl pointer-events-none hidden md:block max-w-xs">
+    💡 <strong class="text-slate-200">操作方法:</strong> ボトルをクリック/タップ長押ししながらマウスを勢いよく振って離すと投げられます。背景ドラッグでカメラ回転、ホイールでズーム。
+  </aside>
+
+  <script>
+    // --- Advanced Procedural Sound Effects Synthesizer using Web Audio API ---
+    class SoundEngine {
+      constructor() {
+        this.ctx = null;
+        this.enabled = true;
+      }
+
+      init() {
+        if (!this.ctx) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          this.ctx = new AudioContext();
+        }
+        if (this.ctx && this.ctx.state === 'suspended') {
+          this.ctx.resume();
+        }
+      }
+
+      // Hard glass collision clink
+      playClink(intensity = 1.0) {
+        if (!this.enabled || !this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        
+        osc.type = 'sine';
+        const freqs = [1900, 2600, 3400, 4800];
+        osc.frequency.setValueAtTime(freqs[Math.floor(Math.random() * freqs.length)], now);
+        osc.frequency.exponentialRampToValueAtTime(1400, now + 0.08);
+
+        gain.gain.setValueAtTime(Math.min(0.4 * intensity, 0.5), now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.12);
+      }
+
+      // Secondary small shard bounce / rattle clink
+      playShardTinkle(timeOffset = 0, volume = 0.08) {
+        if (!this.enabled || !this.ctx) return;
+        const t = this.ctx.currentTime + timeOffset;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'triangle';
+        const f = 2500 + Math.random() * 4500;
+        osc.frequency.setValueAtTime(f, t);
+        osc.frequency.exponentialRampToValueAtTime(f * 0.8, t + 0.06);
+
+        gain.gain.setValueAtTime(volume, t);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(t);
+        osc.stop(t + 0.07);
+      }
+
+      // Multi-layered Hyper-Realistic Glass Shatter & Liquid/Salt Impact
+      playShatter(isSoySauce = true, impactSpeed = 4.0) {
+        if (!this.enabled || !this.ctx) return;
+        const now = this.ctx.currentTime;
+        const intensity = Math.min(Math.max((impactSpeed - 3.0) / 4.0, 0.6), 1.8);
+
+        // 1. Heavy Low Impact Thud (Table/Wall structural shock)
+        const thudOsc = this.ctx.createOscillator();
+        const thudGain = this.ctx.createGain();
+        thudOsc.type = 'sine';
+        thudOsc.frequency.setValueAtTime(160, now);
+        thudOsc.frequency.exponentialRampToValueAtTime(32, now + 0.14);
+        thudGain.gain.setValueAtTime(0.7 * intensity, now);
+        thudGain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+        thudOsc.connect(thudGain);
+        thudGain.connect(this.ctx.destination);
+        thudOsc.start(now);
+        thudOsc.stop(now + 0.2);
+
+        // 2. Ultra-sharp Glass Crack & Burst (High-pass filtered burst)
+        const crackLen = this.ctx.sampleRate * 0.35;
+        const crackBuf = this.ctx.createBuffer(1, crackLen, this.ctx.sampleRate);
+        const crackOut = crackBuf.getChannelData(0);
+        for (let i = 0; i < crackLen; i++) {
+          crackOut[i] = (Math.random() * 2 - 1) * Math.exp(-i / (crackLen * 0.12));
+        }
+        const crackSrc = this.ctx.createBufferSource();
+        crackSrc.buffer = crackBuf;
+
+        const crackFilter = this.ctx.createBiquadFilter();
+        crackFilter.type = 'bandpass';
+        crackFilter.frequency.setValueAtTime(3400, now);
+        crackFilter.Q.setValueAtTime(1.5, now);
+
+        const crackGain = this.ctx.createGain();
+        crackGain.gain.setValueAtTime(0.9 * intensity, now);
+        crackGain.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
+
+        crackSrc.connect(crackFilter);
+        crackFilter.connect(crackGain);
+        crackGain.connect(this.ctx.destination);
+        crackSrc.start(now);
+
+        // 3. Resonant Glass Shivering Tines (Glass bells vibrating in agony)
+        const glassHarmonics = [3120, 4680, 6240, 8100, 10400];
+        glassHarmonics.forEach((freq, idx) => {
+          const osc = this.ctx.createOscillator();
+          const g = this.ctx.createGain();
+          osc.type = idx % 2 === 0 ? 'sine' : 'triangle';
+          osc.frequency.setValueAtTime(freq * (0.97 + Math.random() * 0.06), now);
+          osc.frequency.exponentialRampToValueAtTime(freq * 0.65, now + 0.45);
+
+          const startGain = (0.28 / (idx + 1)) * intensity;
+          g.gain.setValueAtTime(startGain, now);
+          g.gain.exponentialRampToValueAtTime(0.0002, now + 0.3 + idx * 0.08);
+
+          osc.connect(g);
+          g.connect(this.ctx.destination);
+          osc.start(now);
+          osc.stop(now + 0.65);
+        });
+
+        // 4. Cascade of Tiny Shards Raining Down (The signature "Chara-chara-tin!" glass sound)
+        const tinkleCount = 14 + Math.floor(Math.random() * 8);
+        for (let s = 0; s < tinkleCount; s++) {
+          const delay = 0.04 + (s / tinkleCount) * 0.45 + Math.random() * 0.05;
+          const vol = (0.12 - (s / tinkleCount) * 0.07) * intensity;
+          this.playShardTinkle(delay, Math.max(0.015, vol));
+        }
+
+        // 5. Contents Impact: Wet Soy Splash OR Powdery Salt Burst
+        if (isSoySauce) {
+          // Wet slosh/splat
+          const splatLen = this.ctx.sampleRate * 0.4;
+          const splatBuf = this.ctx.createBuffer(1, splatLen, this.ctx.sampleRate);
+          const splatOut = splatBuf.getChannelData(0);
+          for (let k = 0; k < splatLen; k++) {
+            splatOut[k] = (Math.random() * 2 - 1) * Math.exp(-k / (splatLen * 0.22));
+          }
+          const splatSrc = this.ctx.createBufferSource();
+          splatSrc.buffer = splatBuf;
+
+          const splatFilter = this.ctx.createBiquadFilter();
+          splatFilter.type = 'lowpass';
+          splatFilter.frequency.setValueAtTime(950, now);
+          splatFilter.frequency.linearRampToValueAtTime(300, now + 0.35);
+
+          const splatGain = this.ctx.createGain();
+          splatGain.gain.setValueAtTime(0.65 * intensity, now);
+          splatGain.gain.exponentialRampToValueAtTime(0.001, now + 0.36);
+
+          splatSrc.connect(splatFilter);
+          splatFilter.connect(splatGain);
+          splatGain.connect(this.ctx.destination);
+          splatSrc.start(now);
+        } else {
+          // Powdery salt spread hiss
+          const saltLen = this.ctx.sampleRate * 0.55;
+          const saltBuf = this.ctx.createBuffer(1, saltLen, this.ctx.sampleRate);
+          const saltOut = saltBuf.getChannelData(0);
+          for (let m = 0; m < saltLen; m++) {
+            saltOut[m] = (Math.random() * 2 - 1) * Math.exp(-m / (saltLen * 0.3));
+          }
+          const saltSrc = this.ctx.createBufferSource();
+          saltSrc.buffer = saltBuf;
+
+          const saltFilter = this.ctx.createBiquadFilter();
+          saltFilter.type = 'bandpass';
+          saltFilter.frequency.setValueAtTime(5200, now);
+          saltFilter.Q.setValueAtTime(2.2, now);
+
+          const saltGain = this.ctx.createGain();
+          saltGain.gain.setValueAtTime(0.45 * intensity, now);
+          saltGain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+
+          saltSrc.connect(saltFilter);
+          saltFilter.connect(saltGain);
+          saltGain.connect(this.ctx.destination);
+          saltSrc.start(now);
+        }
+      }
+
+      // Whoosh sound when throwing
+      playWhoosh(velocity) {
+        if (!this.enabled || !this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(150, now);
+        osc.frequency.exponentialRampToValueAtTime(380, now + 0.12);
+        osc.frequency.exponentialRampToValueAtTime(90, now + 0.25);
+
+        gain.gain.setValueAtTime(0.01, now);
+        gain.gain.linearRampToValueAtTime(Math.min(0.2, velocity * 0.01), now + 0.08);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.3);
+      }
+    }
+
+    const sound = new SoundEngine();
+
+    // --- Global Application State & Engine Setup ---
+    const canvas = document.getElementById('webgl-canvas');
+    let width = window.innerWidth;
+    let height = window.innerHeight;
+
+    // Camera screen shake intensity
+    let screenShakeIntensity = 0;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0c0f14);
+    scene.fog = new THREE.FogExp2(0x0c0f14, 0.04);
+
+    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
+
+    const renderer = new THREE.WebGLRenderer({
+      canvas: canvas,
+      antialias: true,
+      powerPreference: 'high-performance'
+    });
+    renderer.setSize(width, height);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
+
+    const world = new CANNON.World();
+    world.gravity.set(0, -9.82, 0);
+    world.broadphase = new CANNON.NaiveBroadphase();
+    world.solver.iterations = 12;
+
+    const glassPhysMat = new CANNON.Material('glass');
+    const tablePhysMat = new CANNON.Material('table');
+    const glassContactMat = new CANNON.ContactMaterial(glassPhysMat, tablePhysMat, {
+      friction: 0.35,
+      restitution: 0.22
+    });
+    const glassToGlassContactMat = new CANNON.ContactMaterial(glassPhysMat, glassPhysMat, {
+      friction: 0.25,
+      restitution: 0.3
+    });
+    world.addContactMaterial(glassContactMat);
+    world.addContactMaterial(glassToGlassContactMat);
+
+    function createWoodTexture() {
+      const c = document.createElement('canvas');
+      c.width = 1024;
+      c.height = 1024;
+      const ctx = c.getContext('2d');
+      // Deep mahogany warm diner wood base
+      ctx.fillStyle = '#2d180f';
+      ctx.fillRect(0, 0, 1024, 1024);
+
+      // Wood grain lines
+      for (let i = 0; i < 600; i++) {
+        const y = Math.random() * 1024;
+        const alpha = 0.04 + Math.random() * 0.08;
+        ctx.fillStyle = `rgba(180, 110, 60, ${alpha})`;
+        ctx.fillRect(0, y, 1024, 1 + Math.random() * 3);
+      }
+      // Rings and variation
+      for (let j = 0; j < 30; j++) {
+        const x = Math.random() * 1024;
+        const rad = 60 + Math.random() * 180;
+        const grad = ctx.createRadialGradient(x, 512, 10, x, 512, rad);
+        grad.addColorStop(0, 'rgba(90, 50, 28, 0.15)');
+        grad.addColorStop(1, 'transparent');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 1024, 1024);
+      }
+      return new THREE.CanvasTexture(c);
+    }
+
+    function createWallTexture() {
+      const c = document.createElement('canvas');
+      c.width = 512;
+      c.height = 512;
+      const ctx = c.getContext('2d');
+      // Diner Japanese restaurant retro small tile wall
+      ctx.fillStyle = '#1c222b';
+      ctx.fillRect(0, 0, 512, 512);
+
+      const tileSize = 32;
+      ctx.strokeStyle = '#10141a';
+      ctx.lineWidth = 2;
+      for (let x = 0; x < 512; x += tileSize) {
+        for (let y = 0; y < 512; y += tileSize) {
+          const shade = 28 + Math.floor(Math.random() * 10);
+          ctx.fillStyle = `rgb(${shade}, ${shade + 4}, ${shade + 9})`;
+          ctx.fillRect(x + 1, y + 1, tileSize - 2, tileSize - 2);
+          ctx.strokeRect(x, y, tileSize, tileSize);
+        }
+      }
+      const tex = new THREE.CanvasTexture(c);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(6, 4);
+      return tex;
+    }
+
+    // Dynamic Cube Environment for crisp glass refraction
+    const cubeRenderTarget = new THREE.WebGLCubeRenderTarget(256, {
+      format: THREE.RGBFormat,
+      generateMipmaps: true,
+      minFilter: THREE.LinearMipmapLinearFilter
+    });
+    const cubeCamera = new THREE.CubeCamera(0.1, 50, cubeRenderTarget);
+    scene.add(cubeCamera);
+
+    // --- Lighting & Stage Room Setup ---
+    const ambientLight = new THREE.AmbientLight(0xffeedd, 0.65);
+    scene.add(ambientLight);
+
+    const warmSpot = new THREE.SpotLight(0xffdfa8, 2.2);
+    warmSpot.position.set(0, 5.5, 2.5);
+    warmSpot.angle = Math.PI / 3.5;
+    warmSpot.penumbra = 0.45;
+    warmSpot.castShadow = true;
+    warmSpot.shadow.mapSize.width = 2048;
+    warmSpot.shadow.mapSize.height = 2048;
+    warmSpot.shadow.bias = -0.0008;
+    scene.add(warmSpot);
+
+    const rimLight = new THREE.DirectionalLight(0x739aff, 0.9);
+    rimLight.position.set(-4, 3, -4);
+    scene.add(rimLight);
+
+    const warmFill = new THREE.PointLight(0xff8833, 1.2, 8);
+    warmFill.position.set(3, 2, 1);
+    scene.add(warmFill);
+
+    // Counter Table Surface
+    const woodTex = createWoodTexture();
+    const tableMat = new THREE.MeshStandardMaterial({
+      map: woodTex,
+      roughness: 0.28,
+      metalness: 0.1
+    });
+    const tableGeo = new THREE.BoxGeometry(9, 0.6, 6);
+    const tableMesh = new THREE.Mesh(tableGeo, tableMat);
+    tableMesh.position.set(0, -0.3, 0);
+    tableMesh.receiveShadow = true;
+    scene.add(tableMesh);
+
+    // Table Physics Body
+    const tableBody = new CANNON.Body({
+      mass: 0, // static
+      material: tablePhysMat,
+      shape: new CANNON.Box(new CANNON.Vec3(4.5, 0.3, 3))
+    });
+    tableBody.position.set(0, -0.3, 0);
+    world.addBody(tableBody);
+
+    // Back Wall (for bottles to smash against!)
+    const wallTex = createWallTexture();
+    const wallMat = new THREE.MeshStandardMaterial({
+      map: wallTex,
+      roughness: 0.6,
+      metalness: 0.15
+    });
+    const backWallMesh = new THREE.Mesh(new THREE.BoxGeometry(10, 8, 0.5), wallMat);
+    backWallMesh.position.set(0, 3.5, -2.5);
+    backWallMesh.receiveShadow = true;
+    scene.add(backWallMesh);
+
+    const backWallBody = new CANNON.Body({
+      mass: 0,
+      material: tablePhysMat,
+      shape: new CANNON.Box(new CANNON.Vec3(5, 4, 0.25))
+    });
+    backWallBody.position.set(0, 3.5, -2.5);
+    world.addBody(backWallBody);
+
+    // Side Walls & Floor boundaries (invisible bumpers so bottles stay in play area)
+    function addInvisibleBarrier(x, y, z, sx, sy, sz) {
+      const body = new CANNON.Body({
+        mass: 0,
+        shape: new CANNON.Box(new CANNON.Vec3(sx, sy, sz))
+      });
+      body.position.set(x, y, z);
+      world.addBody(body);
+    }
+    addInvisibleBarrier(-4.8, 3, 0, 0.2, 4, 3.5); // Left
+    addInvisibleBarrier(4.8, 3, 0, 0.2, 4, 3.5);  // Right
+    addInvisibleBarrier(0, 3, 3.8, 5, 4, 0.2);    // Front guard
+    addInvisibleBarrier(0, -1.5, 0, 10, 0.2, 10); // Floor safety net
+
+    // --- Realistic Physical Materials for Glass, Caps, Liquid, Salt ---
+    const glassMaterial = new THREE.MeshPhysicalMaterial({
+      color: 0xffffff,
+      transmission: 0.94,
+      opacity: 1,
+      transparent: true,
+      roughness: 0.05,
+      ior: 1.52, // Standard glass IOR
+      reflectivity: 0.9,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.04,
+      envMap: cubeRenderTarget.texture,
+      envMapIntensity: 1.3
+    });
+
+    // Realistic Red Soy Sauce Dispenser Cap Plastic
+    const soyCapMaterial = new THREE.MeshStandardMaterial({
+      color: 0xcc1818,
+      roughness: 0.35,
+      metalness: 0.05
+    });
+
+    // Dark reddish-brown Soy Sauce Liquid
+    const soyLiquidMaterial = new THREE.MeshPhysicalMaterial({
+      color: 0x1f0802,
+      transmission: 0.3,
+      transparent: true,
+      opacity: 0.96,
+      roughness: 0.1,
+      ior: 1.34
+    });
+
+    // Chrome Metal Cap for Salt Shaker
+    const chromeCapMaterial = new THREE.MeshStandardMaterial({
+      color: 0xe5e7eb,
+      metalness: 0.95,
+      roughness: 0.15,
+      envMap: cubeRenderTarget.texture
+    });
+
+    // Pure White Granulated Salt Substance
+    const saltSubstanceMaterial = new THREE.MeshStandardMaterial({
+      color: 0xfafafa,
+      roughness: 0.88,
+      metalness: 0.02
+    });
+
+    // --- Bottle Geometry Constructors ---
+    // 1. Classic Japanese Soy Sauce Bottle (Kikkoman shaped dispenser)
+    function createSoySauceMesh() {
+      const root = new THREE.Group();
+      const group = new THREE.Group();
+      group.position.y = -0.475; // Center geometry around the physics center of mass
+      root.add(group);
+
+      // Flared glass flask body (Lathe geometry for organic curved glass contours)
+      const points = [];
+      points.push(new THREE.Vector2(0, 0));
+      points.push(new THREE.Vector2(0.38, 0.02)); // base
+      points.push(new THREE.Vector2(0.42, 0.15)); // belly
+      points.push(new THREE.Vector2(0.40, 0.35));
+      points.push(new THREE.Vector2(0.26, 0.55)); // taper to neck
+      points.push(new THREE.Vector2(0.22, 0.75)); // neck
+      points.push(new THREE.Vector2(0.24, 0.82)); // rim
+      points.push(new THREE.Vector2(0.20, 0.82)); // inner rim
+      points.push(new THREE.Vector2(0.18, 0.73));
+      points.push(new THREE.Vector2(0.22, 0.53));
+      points.push(new THREE.Vector2(0.36, 0.34));
+      points.push(new THREE.Vector2(0.37, 0.14));
+      points.push(new THREE.Vector2(0.33, 0.04));
+      points.push(new THREE.Vector2(0, 0.04));
+      const glassGeo = new THREE.LatheGeometry(points, 24);
+      const glassMesh = new THREE.Mesh(glassGeo, glassMaterial);
+      glassMesh.castShadow = true;
+      group.add(glassMesh);
+
+      // Inner liquid mesh
+      const liquidPoints = [];
+      liquidPoints.push(new THREE.Vector2(0, 0.05));
+      liquidPoints.push(new THREE.Vector2(0.34, 0.05));
+      liquidPoints.push(new THREE.Vector2(0.38, 0.15));
+      liquidPoints.push(new THREE.Vector2(0.36, 0.35));
+      liquidPoints.push(new THREE.Vector2(0.23, 0.52));
+      liquidPoints.push(new THREE.Vector2(0, 0.52)); // fill level
+      const liquidGeo = new THREE.LatheGeometry(liquidPoints, 20);
+      const liquidMesh = new THREE.Mesh(liquidGeo, soyLiquidMaterial);
+      group.add(liquidMesh);
+
+      // Cap with two dispenser spouts (iconic Japanese red cap)
+      const capGroup = new THREE.Group();
+      capGroup.position.set(0, 0.80, 0);
+
+      const capBaseGeo = new THREE.CylinderGeometry(0.25, 0.26, 0.15, 20);
+      const capBaseMesh = new THREE.Mesh(capBaseGeo, soyCapMaterial);
+      capBaseMesh.position.y = 0.075;
+      capGroup.add(capBaseMesh);
+
+      // Spout nozzle 1 (pouring spout)
+      const spoutGeo = new THREE.CylinderGeometry(0.04, 0.06, 0.22, 12);
+      const spout1 = new THREE.Mesh(spoutGeo, soyCapMaterial);
+      spout1.rotation.z = Math.PI / 4;
+      spout1.position.set(0.18, 0.12, 0);
+      capGroup.add(spout1);
+
+      // Spout nozzle 2 (air breather hole / opposing spout)
+      const spout2 = new THREE.Mesh(spoutGeo, soyCapMaterial);
+      spout2.rotation.z = -Math.PI / 4;
+      spout2.position.set(-0.18, 0.12, 0);
+      capGroup.add(spout2);
+
+      group.add(capGroup);
+      return root;
+    }
+
+    // 2. Heavy-base Faceted Glass Salt Shaker with Perforated Chrome Cap
+    function createSaltShakerMesh() {
+      const root = new THREE.Group();
+      const group = new THREE.Group();
+      group.position.y = -0.475; // Center geometry around the physics center of mass
+      root.add(group);
+
+      // Thick faceted glass cylinder with bottom taper
+      const glassGeo = new THREE.CylinderGeometry(0.32, 0.34, 0.85, 12, 1);
+      const glassMesh = new THREE.Mesh(glassGeo, glassMaterial);
+      glassMesh.position.y = 0.425;
+      glassMesh.castShadow = true;
+      group.add(glassMesh);
+
+      // Inner Salt clump fill
+      const saltGeo = new THREE.CylinderGeometry(0.27, 0.28, 0.65, 12);
+      const saltMesh = new THREE.Mesh(saltGeo, saltSubstanceMaterial);
+      saltMesh.position.y = 0.35;
+      group.add(saltMesh);
+
+      // Chrome perforated dome cap
+      const capGeo = new THREE.SphereGeometry(0.32, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2);
+      const capMesh = new THREE.Mesh(capGeo, chromeCapMaterial);
+      capMesh.position.y = 0.85;
+      group.add(capMesh);
+
+      // Small cap holes detail (dark dots)
+      const holeMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
+      const holeGeo = new THREE.CircleGeometry(0.02, 6);
+      const holeOffsets = [
+        [0, 1.16, 0, -Math.PI/2, 0],
+        [0.12, 1.13, 0, -Math.PI/2.4, 0.8],
+        [-0.12, 1.13, 0, -Math.PI/2.4, -0.8],
+        [0, 1.13, 0.12, -Math.PI/2.8, 0],
+        [0, 1.13, -0.12, -Math.PI/1.6, 0]
+      ];
+      holeOffsets.forEach(pos => {
+        const dot = new THREE.Mesh(holeGeo, holeMat);
+        dot.position.set(pos[0], pos[1], pos[2]);
+        dot.rotation.x = pos[3];
+        group.add(dot);
+      });
+
+      return root;
+    }
+
+    // --- Active Bottles Management ---
+    const activeBottles = [];
+    let bottleIdCounter = 0;
+
+    // Queue for safely removing physics bodies after the simulation step completes
+    const bodiesToRemove = [];
+    function queueBodyRemoval(body) {
+      if (body && !bodiesToRemove.includes(body)) {
+        bodiesToRemove.push(body);
+      }
+    }
+
+    // Dynamic rigid bodies for surviving solid parts (Cap and Glass Base chunks)
+    const rigidDebris = [];
+
+    function addRigidPart(mesh, shape, mass, pos, vel, angVel, soundType = 'clink') {
+      scene.add(mesh);
+      mesh.position.copy(pos);
+
+      const body = new CANNON.Body({
+        mass: mass,
+        material: glassPhysMat,
+        linearDamping: 0.15,
+        angularDamping: 0.2
+      });
+      body.addShape(shape);
+      body.position.set(pos.x, pos.y, pos.z);
+      body.velocity.set(vel.x, vel.y, vel.z);
+      body.angularVelocity.set(angVel.x, angVel.y, angVel.z);
+
+      body.addEventListener('collide', (e) => {
+        if (Math.random() > 0.4) {
+          const v = body.velocity.length();
+          if (v > 0.8) sound.playClink(Math.min(v * 0.2, 0.4));
+        }
+      });
+
+      world.addBody(body);
+      rigidDebris.push({ mesh, body, life: 1.0, decay: 0.0008 });
+    }
+
+    class Bottle {
+      constructor(type, posX, posZ) {
+        this.id = ++bottleIdCounter;
+        this.type = type; // 'soy' or 'salt'
+        this.isBroken = false;
+
+        // Visual 3D Object
+        this.mesh = this.type === 'soy' ? createSoySauceMesh() : createSaltShakerMesh();
+        const height = 0.95;
+        this.mesh.position.set(posX, height / 2 + 0.02, posZ);
+        scene.add(this.mesh);
+
+        // Physics Body
+        const radius = this.type === 'soy' ? 0.38 : 0.33;
+        const cylinderShape = new CANNON.Cylinder(radius, radius, height, 12);
+        const q = new CANNON.Quaternion();
+        q.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
+
+        this.body = new CANNON.Body({
+          mass: 0.85,
+          material: glassPhysMat,
+          linearDamping: 0.05,
+          angularDamping: 0.15
+        });
+        this.body.addShape(cylinderShape, new CANNON.Vec3(0, 0, 0), q);
+        this.body.position.set(posX, height / 2 + 0.02, posZ);
+
+        // Tag reference for raycasting and collision detection
+        this.body.bottleRef = this;
+        this.mesh.userData.bottleRef = this;
+
+        // Collision smashing listener
+        this.body.addEventListener('collide', (e) => {
+          this.handleCollision(e);
+        });
+
+        world.addBody(this.body);
+        activeBottles.push(this);
+      }
+
+      update() {
+        if (this.isBroken) return;
+        this.mesh.position.copy(this.body.position);
+        this.mesh.quaternion.copy(this.body.quaternion);
+
+        // Check bounds (if fallen off table too far, shatter)
+        if (this.body.position.y < -1.0) {
+          this.shatter(new THREE.Vector3(0, 1, 0), 5);
+        }
+      }
+
+      handleCollision(e) {
+        if (this.isBroken) return;
+        
+        let relativeVelocity = 0;
+        try {
+          if (e.contact && typeof e.contact.getImpactVelocityAlongNormal === 'function') {
+            relativeVelocity = Math.abs(e.contact.getImpactVelocityAlongNormal());
+          } else if (this.body && this.body.velocity) {
+            relativeVelocity = this.body.velocity.length();
+          }
+        } catch (err) {
+          relativeVelocity = this.body && this.body.velocity ? this.body.velocity.length() : 0;
+        }
+
+        // Minor impacts: play clink sound
+        if (relativeVelocity > 0.8 && relativeVelocity < 3.2) {
+          sound.playClink(Math.min(relativeVelocity / 3.0, 1.0));
+        }
+
+        // High velocity impact: SHATTER!
+        if (relativeVelocity >= 3.2) {
+          const normal = (e.contact && e.contact.ni) ? e.contact.ni : { x: 0, y: 1, z: 0 };
+          const contactNormal = new THREE.Vector3(normal.x, normal.y, normal.z);
+          this.shatter(contactNormal, relativeVelocity);
+        }
+      }
+
+      shatter(impactNormal, impactSpeed) {
+        if (this.isBroken) return;
+        this.isBroken = true;
+
+        // Screen shake intensity proportional to impact
+        screenShakeIntensity = Math.min(0.28, 0.08 + impactSpeed * 0.035);
+
+        // Realistic multi-layer shatter sound
+        sound.playShatter(this.type === 'soy', impactSpeed);
+
+        // Flash & HUD
+        triggerSmashEffect(this.mesh.position, this.type);
+
+        // Spawn 3D Glass Shards, surviving Rigid Cap/Base parts, and Liquid/Salt
+        spawnGlassDebris(this.mesh.position, this.body.velocity, this.type, this.mesh.quaternion);
+
+        // Remove visual mesh immediately and disable physics collision response
+        scene.remove(this.mesh);
+        this.body.collisionResponse = false;
+        queueBodyRemoval(this.body);
+
+        // Clear drag selection if currently held
+        if (selectedBottle === this) {
+          selectedBottle = null;
+          isDragging = false;
+        }
+
+        // Remove from active list
+        const idx = activeBottles.indexOf(this);
+        if (idx !== -1) activeBottles.splice(idx, 1);
+      }
+    }
+
+    // --- Glass Shards & Condiment Spill Particle Engine ---
+    const debrisGroup = [];
+    const splashParticles = [];
+
+    // Realistic 3D Thick Prismatic Glass Shard Geometry
+    function createThickShardGeometry() {
+      const geo = new THREE.BufferGeometry();
+      const s = 0.06 + Math.random() * 0.16;
+      const h = 0.02 + Math.random() * 0.04; // glass thickness!
+
+      // 3D Prism vertices: bottom triangle and extruded top triangle
+      const x1 = (Math.random() - 0.5) * s * 0.6;
+      const z1 = (Math.random() - 0.5) * s * 0.6;
+      const x2 = s * (0.6 + Math.random() * 0.5);
+      const z2 = (Math.random() - 0.5) * s * 0.4;
+      const x3 = (Math.random() - 0.5) * s * 0.4;
+      const z3 = s * (0.6 + Math.random() * 0.5);
+
+      const positions = [
+        // Bottom triangle
+        x1, 0, z1,  x2, 0, z2,  x3, 0, z3,
+        // Top triangle
+        x1, h, z1,  x3, h, z3,  x2, h, z2,
+        // Side 1
+        x1, 0, z1,  x1, h, z1,  x2, h, z2,
+        x1, 0, z1,  x2, h, z2,  x2, 0, z2,
+        // Side 2
+        x2, 0, z2,  x2, h, z2,  x3, h, z3,
+        x2, 0, z2,  x3, h, z3,  x3, 0, z3,
+        // Side 3
+        x3, 0, z3,  x3, h, z3,  x1, h, z1,
+        x3, 0, z3,  x1, h, z1,  x1, 0, z1
+      ];
+
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geo.computeVertexNormals();
+      return geo;
+    }
+
+    const shardMaterial = new THREE.MeshPhysicalMaterial({
+      color: 0xffffff,
+      transmission: 0.94,
+      transparent: true,
+      roughness: 0.04,
+      ior: 1.54,
+      reflectivity: 0.95,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.02,
+      envMap: cubeRenderTarget.texture,
+      side: THREE.DoubleSide
+    });
+
+    let totalSmashedCount = 0;
+    let totalShardsCreated = 0;
+
+    function spawnGlassDebris(pos, parentVel, type, parentQuat) {
+      const shardCount = 36 + Math.floor(Math.random() * 16);
+      totalSmashedCount++;
+      totalShardsCreated += shardCount;
+
+      document.getElementById('stat-smashed').innerText = totalSmashedCount;
+      document.getElementById('stat-shards').innerText = totalShardsCreated;
+
+      // A. SPAWN SURVIVING DETACHED RIGID OBJECTS (The Cap & The Heavy Glass Base)
+      // 1. Cap Object bouncing across the counter
+      if (type === 'soy') {
+        const capMesh = new THREE.Group();
+        const base = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.25, 0.14, 16), soyCapMaterial);
+        capMesh.add(base);
+        const spout = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.06, 0.2, 8), soyCapMaterial);
+        spout.rotation.z = Math.PI / 4;
+        spout.position.set(0.16, 0.06, 0);
+        capMesh.add(spout);
+
+        const capShape = new CANNON.Sphere(0.24);
+        const capVel = new THREE.Vector3(
+          parentVel.x * 0.5 + (Math.random() - 0.5) * 3.5,
+          Math.abs(parentVel.y * 0.4) + 2.5 + Math.random() * 2.0,
+          parentVel.z * 0.5 + (Math.random() - 0.5) * 3.5
+        );
+        const capAngVel = new THREE.Vector3((Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20);
+        addRigidPart(capMesh, capShape, 0.15, new THREE.Vector3(pos.x, pos.y + 0.35, pos.z), capVel, capAngVel);
+      } else {
+        // Chrome dome cap bouncing
+        const capMesh = new THREE.Mesh(new THREE.SphereGeometry(0.3, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2), chromeCapMaterial);
+        const capShape = new CANNON.Sphere(0.28);
+        const capVel = new THREE.Vector3(
+          parentVel.x * 0.5 + (Math.random() - 0.5) * 3.5,
+          Math.abs(parentVel.y * 0.4) + 2.8 + Math.random() * 2.0,
+          parentVel.z * 0.5 + (Math.random() - 0.5) * 3.5
+        );
+        const capAngVel = new THREE.Vector3((Math.random() - 0.5) * 22, (Math.random() - 0.5) * 22, (Math.random() - 0.5) * 22);
+        addRigidPart(capMesh, capShape, 0.12, new THREE.Vector3(pos.x, pos.y + 0.4, pos.z), capVel, capAngVel);
+      }
+
+      // 2. Thick shattered Glass Bottom Base Chunk
+      const baseChunkMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.38, 0.18, 10), glassMaterial);
+      const baseChunkShape = new CANNON.Cylinder(0.36, 0.36, 0.18, 8);
+      const baseVel = new THREE.Vector3(
+        parentVel.x * 0.3 + (Math.random() - 0.5) * 1.5,
+        1.0 + Math.random() * 1.5,
+        parentVel.z * 0.3 + (Math.random() - 0.5) * 1.5
+      );
+      const baseAngVel = new THREE.Vector3((Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10);
+      addRigidPart(baseChunkMesh, baseChunkShape, 0.4, new THREE.Vector3(pos.x, pos.y - 0.1, pos.z), baseVel, baseAngVel);
+
+      // B. SCATTER DENSE 3D THICK GLASS SHARDS
+      for (let i = 0; i < shardCount; i++) {
+        const shardMesh = new THREE.Mesh(createThickShardGeometry(), shardMaterial);
+        shardMesh.position.set(
+          pos.x + (Math.random() - 0.5) * 0.3,
+          pos.y + (Math.random() - 0.5) * 0.5 + 0.25,
+          pos.z + (Math.random() - 0.5) * 0.3
+        );
+        scene.add(shardMesh);
+
+        const angle = Math.random() * Math.PI * 2;
+        const elevation = (Math.random() - 0.1) * Math.PI;
+        const speed = 2.5 + Math.random() * 7.5;
+
+        const vel = new THREE.Vector3(
+          Math.cos(angle) * Math.cos(elevation) * speed + parentVel.x * 0.4,
+          Math.sin(elevation) * speed + 2.8 + parentVel.y * 0.35,
+          Math.sin(angle) * Math.cos(elevation) * speed + parentVel.z * 0.4
+        );
+
+        const rotVel = new THREE.Vector3(
+          (Math.random() - 0.5) * 45,
+          (Math.random() - 0.5) * 45,
+          (Math.random() - 0.5) * 45
+        );
+
+        debrisGroup.push({
+          mesh: shardMesh,
+          vel: vel,
+          rotVel: rotVel,
+          life: 1.0,
+          decay: 0.002 + Math.random() * 0.003,
+          isFloor: false,
+          bounceCount: 0
+        });
+      }
+
+      // C. LIQUID EXPLOSION OR DENSE SALT CLOUD & ORGANIC SPLATTERS
+      if (type === 'soy') {
+        const dropCount = 55;
+        const dropGeo = new THREE.SphereGeometry(0.045, 6, 6);
+        for (let j = 0; j < dropCount; j++) {
+          const drop = new THREE.Mesh(dropGeo, soyLiquidMaterial);
+          drop.position.set(pos.x, pos.y + 0.15, pos.z);
+          scene.add(drop);
+
+          const spd = 2.0 + Math.random() * 6.5;
+          const theta = Math.random() * Math.PI * 2;
+          const vy = 1.2 + Math.random() * 4.5;
+          splashParticles.push({
+            mesh: drop,
+            vel: new THREE.Vector3(Math.cos(theta) * spd + parentVel.x * 0.3, vy, Math.sin(theta) * spd + parentVel.z * 0.3),
+            life: 1.0,
+            decay: 0.012,
+            type: 'liquid'
+          });
+        }
+        // Realistic Splattered Soy Stain Decal with Organic Droplets
+        createOrganicSplatter(pos.x, pos.z, '#1f0802', 0.92);
+      } else {
+        // High density salt powder cloud
+        const saltCount = 75;
+        const saltParticleGeo = new THREE.BoxGeometry(0.035, 0.035, 0.035);
+        for (let k = 0; k < saltCount; k++) {
+          const saltP = new THREE.Mesh(saltParticleGeo, saltSubstanceMaterial);
+          saltP.position.set(pos.x, pos.y + 0.15, pos.z);
+          scene.add(saltP);
+
+          const spd = 1.5 + Math.random() * 5.2;
+          const theta = Math.random() * Math.PI * 2;
+          splashParticles.push({
+            mesh: saltP,
+            vel: new THREE.Vector3(Math.cos(theta) * spd + parentVel.x * 0.25, 1.8 + Math.random() * 4.0, Math.sin(theta) * spd + parentVel.z * 0.25),
+            life: 1.0,
+            decay: 0.009,
+            type: 'powder'
+          });
+        }
+        // Salt pile & white residue ring
+        createOrganicSplatter(pos.x, pos.z, '#ffffff', 0.82, true);
+      }
+    }
+
+    // Procedural Organic Splatter Texture Generator (Jagged droplets & splash spokes)
+    function createOrganicSplatter(x, z, hexColor, opacity = 0.9, isSalt = false) {
+      const c = document.createElement('canvas');
+      c.width = 512;
+      c.height = 512;
+      const ctx = c.getContext('2d');
+
+      const cx = 256;
+      const cy = 256;
+
+      ctx.fillStyle = hexColor;
+
+      if (!isSalt) {
+        // 1. Organic irregular puddle core
+        ctx.beginPath();
+        const baseR = 120 + Math.random() * 40;
+        const numPoints = 28;
+        for (let i = 0; i <= numPoints; i++) {
+          const a = (i / numPoints) * Math.PI * 2;
+          const r = baseR + (Math.sin(a * 4) + Math.cos(a * 7) + (Math.random() - 0.5)) * 38;
+          const px = cx + Math.cos(a) * r;
+          const py = cy + Math.sin(a) * r;
+          if (i === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fill();
+
+        // 2. High-speed splash tendrils & satellite droplets
+        const numDroplets = 35 + Math.floor(Math.random() * 20);
+        for (let d = 0; d < numDroplets; d++) {
+          const angle = Math.random() * Math.PI * 2;
+          const dist = baseR + 25 + Math.random() * 95;
+          const rad = 4 + Math.random() * 12;
+          ctx.beginPath();
+          ctx.arc(cx + Math.cos(angle) * dist, cy + Math.sin(angle) * dist, rad, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      } else {
+        // Salt Powder: Soft powdery Gaussian gradient & granule flecks
+        const grad = ctx.createRadialGradient(cx, cy, 10, cx, cy, 190);
+        grad.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
+        grad.addColorStop(0.5, 'rgba(240, 240, 240, 0.6)');
+        grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 190, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Salt specs
+        ctx.fillStyle = '#ffffff';
+        for (let s = 0; s < 120; s++) {
+          const a = Math.random() * Math.PI * 2;
+          const r = Math.random() * 220;
+          ctx.fillRect(cx + Math.cos(a) * r, cy + Math.sin(a) * r, 3, 3);
+        }
+      }
+
+      const tex = new THREE.CanvasTexture(c);
+      const size = 1.1 + Math.random() * 0.5;
+      const puddleGeo = new THREE.PlaneGeometry(size, size);
+      puddleGeo.rotateX(-Math.PI / 2);
+
+      const puddleMat = new THREE.MeshStandardMaterial({
+        map: tex,
+        transparent: true,
+        opacity: opacity,
+        roughness: isSalt ? 0.95 : 0.08,
+        metalness: 0.04
+      });
+      const puddle = new THREE.Mesh(puddleGeo, puddleMat);
+      puddle.position.set(x, 0.003, z);
+      scene.add(puddle);
+
+      debrisGroup.push({
+        mesh: puddle,
+        vel: new THREE.Vector3(),
+        rotVel: new THREE.Vector3(),
+        life: 1.0,
+        decay: 0.0006,
+        isFloor: true
+      });
+    }
+
+    // --- Visual Smash Feedback & Banner Popups ---
+    const flashOverlay = document.getElementById('flash-overlay');
+    const smashBanner = document.getElementById('smash-banner');
+    const smashBannerText = document.getElementById('smash-banner-text');
+
+    const smashWordsSoy = ["醤油大爆発！", "SOY SPLASH!", "木っ端微塵！", "豪快粉砕！", "CRASH!!"];
+    const smashWordsSalt = ["塩分大拡散！", "SALT SHATTER!", "ガラス粉砕！", "クリスタルブレイク！", "SMASHED!!"];
+
+    function triggerSmashEffect(position, type) {
+      // White impact flash
+      flashOverlay.style.opacity = '0.45';
+      setTimeout(() => { flashOverlay.style.opacity = '0'; }, 80);
+
+      // Random text banner
+      const words = type === 'soy' ? smashWordsSoy : smashWordsSalt;
+      smashBannerText.innerText = words[Math.floor(Math.random() * words.length)];
+
+      smashBanner.classList.remove('opacity-0', '-translate-y-4', 'scale-90');
+      smashBanner.classList.add('opacity-100', 'translate-y-0', 'scale-100');
+
+      clearTimeout(smashBanner.timer);
+      smashBanner.timer = setTimeout(() => {
+        smashBanner.classList.add('opacity-0', '-translate-y-4', 'scale-90');
+        smashBanner.classList.remove('opacity-100', 'translate-y-0', 'scale-100');
+      }, 1100);
+    }
+
+    // --- Interactive Drag & Fling Physics Throwing System ---
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+
+    let isDragging = false;
+    let selectedBottle = null;
+    let dragPlane = new THREE.Plane();
+    let dragOffset = new THREE.Vector3();
+    let prevMousePos = new THREE.Vector3();
+    let throwVelocity = new THREE.Vector3();
+    let velocityHistory = [];
+    let lastDragTime = performance.now();
+
+    // Camera Orbit Controls variables
+    let isOrbiting = false;
+    let prevPointer = { x: 0, y: 0 };
+    let cameraAngleTheta = 0;
+    let cameraAnglePhi = 0.55;
+    let cameraDistance = 6.2;
+
+    function updateCameraPosition() {
+      camera.position.x = cameraDistance * Math.sin(cameraAngleTheta) * Math.cos(cameraAnglePhi);
+      camera.position.y = Math.max(1.0, cameraDistance * Math.sin(cameraAnglePhi));
+      camera.position.z = cameraDistance * Math.cos(cameraAngleTheta) * Math.cos(cameraAnglePhi);
+      camera.lookAt(0, 0.6, 0);
+    }
+    updateCameraPosition();
+
+    // Convert mouse/touch coordinates
+    function getNormalizedCoords(e) {
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      return {
+        x: (clientX / window.innerWidth) * 2 - 1,
+        y: -(clientY / window.innerHeight) * 2 + 1,
+        rawX: clientX,
+        rawY: clientY
+      };
+    }
+
+    // Pointer Down (Pick bottle or start orbiting)
+    function onPointerDown(e) {
+      sound.init(); // Initialize audio context on first gesture
+      const coords = getNormalizedCoords(e);
+      mouse.x = coords.x;
+      mouse.y = coords.y;
+
+      raycaster.setFromCamera(mouse, camera);
+
+      // Collect active bottle meshes
+      const interactiveMeshes = [];
+      activeBottles.forEach(b => {
+        if (!b.isBroken) {
+          b.mesh.traverse(child => {
+            if (child.isMesh) {
+              child.userData.bottleParent = b;
+              interactiveMeshes.push(child);
+            }
+          });
+        }
+      });
+
+      const intersects = raycaster.intersectObjects(interactiveMeshes);
+
+      if (intersects.length > 0) {
+        // Picked a bottle!
+        const hit = intersects[0];
+        selectedBottle = hit.object.userData.bottleParent;
+
+        if (selectedBottle && !selectedBottle.isBroken) {
+          isDragging = true;
+
+          // Drag plane facing camera at bottle height
+          dragPlane.setFromNormalAndCoplanarPoint(
+            camera.getWorldDirection(new THREE.Vector3()).negate(),
+            selectedBottle.mesh.position
+          );
+
+          const planeIntersect = new THREE.Vector3();
+          raycaster.ray.intersectPlane(dragPlane, planeIntersect);
+          dragOffset.copy(planeIntersect).sub(selectedBottle.mesh.position);
+
+          // Zero out physics velocity while held & make kinematic to prevent gravity drift
+          selectedBottle.body.velocity.set(0, 0, 0);
+          selectedBottle.body.angularVelocity.set(0, 0, 0);
+          selectedBottle.body.type = CANNON.Body.KINEMATIC;
+
+          velocityHistory = [];
+          prevMousePos.copy(planeIntersect);
+          lastDragTime = performance.now();
+
+          // Haptic touch feedback if available
+          if (navigator.vibrate) navigator.vibrate(25);
+          return;
+        }
+      }
+
+      // Did not click bottle -> start camera orbit
+      isOrbiting = true;
+      prevPointer = { x: coords.rawX, y: coords.rawY };
+    }
+
+    // Pointer Move (Drag bottle or rotate camera)
+    function onPointerMove(e) {
+      const coords = getNormalizedCoords(e);
+      mouse.x = coords.x;
+      mouse.y = coords.y;
+
+      if (isDragging && selectedBottle && !selectedBottle.isBroken) {
+        raycaster.setFromCamera(mouse, camera);
+        const planeIntersect = new THREE.Vector3();
+
+        if (raycaster.ray.intersectPlane(dragPlane, planeIntersect)) {
+          const targetPos = planeIntersect.clone().sub(dragOffset);
+          targetPos.y = Math.max(0.475, targetPos.y); // Keep above table
+
+          // Calculate instantaneous fling velocity with actual elapsed time
+          const now = performance.now();
+          const dt = Math.max(0.005, (now - lastDragTime) / 1000);
+          lastDragTime = now;
+          const instVel = targetPos.clone().sub(prevMousePos).divideScalar(dt);
+          velocityHistory.push(instVel);
+          if (velocityHistory.length > 5) velocityHistory.shift();
+
+          // Move Cannon body and mesh directly
+          selectedBottle.body.position.set(targetPos.x, targetPos.y, targetPos.z);
+          selectedBottle.mesh.position.copy(targetPos);
+          prevMousePos.copy(targetPos);
+        }
+      } else if (isOrbiting) {
+        const dx = coords.rawX - prevPointer.x;
+        const dy = coords.rawY - prevPointer.y;
+        prevPointer = { x: coords.rawX, y: coords.rawY };
+
+        cameraAngleTheta -= dx * 0.007;
+        cameraAnglePhi = Math.max(0.15, Math.min(Math.PI / 2.3, cameraAnglePhi + dy * 0.006));
+        updateCameraPosition();
+      }
+    }
+
+    // Pointer Up (Release & THROW!)
+    function onPointerUp() {
+      if (isDragging && selectedBottle && !selectedBottle.isBroken) {
+        // Average recent velocity for smooth explosive throw
+        const avgVel = new THREE.Vector3();
+        velocityHistory.forEach(v => avgVel.add(v));
+        if (velocityHistory.length > 0) {
+          avgVel.divideScalar(velocityHistory.length);
+        }
+
+        // Restore dynamic physics and wake the body up
+        selectedBottle.body.type = CANNON.Body.DYNAMIC;
+        selectedBottle.body.wakeUp();
+
+        // Add inward throw boost along camera look direction if flicking
+        const forwardVector = camera.getWorldDirection(new THREE.Vector3());
+        const speedMagnitude = avgVel.length();
+
+        // Apply throw force
+        const flingMultiplier = 1.35;
+        selectedBottle.body.velocity.set(
+          avgVel.x * flingMultiplier + forwardVector.x * speedMagnitude * 0.5,
+          avgVel.y * flingMultiplier + 1.2,
+          avgVel.z * flingMultiplier + forwardVector.z * speedMagnitude * 0.5
+        );
+
+        // Impart random dramatic spin
+        selectedBottle.body.angularVelocity.set(
+          (Math.random() - 0.5) * speedMagnitude * 2.5,
+          (Math.random() - 0.5) * speedMagnitude * 2.0,
+          (Math.random() - 0.5) * speedMagnitude * 2.5
+        );
+
+        if (speedMagnitude > 2.0) {
+          sound.playWhoosh(speedMagnitude);
+        }
+
+        selectedBottle = null;
+        isDragging = false;
+      }
+      isOrbiting = false;
+    }
+
+    // Mouse wheel for zoom
+    window.addEventListener('wheel', (e) => {
+      cameraDistance = Math.max(3.0, Math.min(10.0, cameraDistance + e.deltaY * 0.005));
+      updateCameraPosition();
+    }, { passive: true });
+
+    // Event Listeners
+    window.addEventListener('mousedown', onPointerDown);
+    window.addEventListener('mousemove', onPointerMove);
+    window.addEventListener('mouseup', onPointerUp);
+
+    window.addEventListener('touchstart', onPointerDown, { passive: false });
+    window.addEventListener('touchmove', onPointerMove, { passive: false });
+    window.addEventListener('touchend', onPointerUp);
+
+    // --- HUD Button Actions & Gameplay Features ---
+    let isSlowMotion = false;
+    let physicsTimeStep = 1 / 60;
+
+    document.getElementById('btn-spawn-soy').addEventListener('click', () => {
+      sound.init();
+      const x = (Math.random() - 0.5) * 1.8 - 0.7;
+      const z = (Math.random() - 0.5) * 1.0;
+      new Bottle('soy', x, z);
+    });
+
+    document.getElementById('btn-spawn-salt').addEventListener('click', () => {
+      sound.init();
+      const x = (Math.random() - 0.5) * 1.8 + 0.7;
+      const z = (Math.random() - 0.5) * 1.0;
+      new Bottle('salt', x, z);
+    });
+
+    // Slow motion toggle
+    const btnSlowMo = document.getElementById('btn-slowmo');
+    const slowmoText = document.getElementById('slowmo-text');
+    btnSlowMo.addEventListener('click', () => {
+      isSlowMotion = !isSlowMotion;
+      physicsTimeStep = isSlowMotion ? 1 / 240 : 1 / 60;
+      slowmoText.innerText = isSlowMotion ? 'スロー: ON' : 'スロー: OFF';
+      btnSlowMo.classList.toggle('bg-amber-500/40', isSlowMotion);
+    });
+
+    // Clean Table button (removes all shards, spills, and re-spawns pristine bottles)
+    document.getElementById('btn-clean').addEventListener('click', () => {
+      sound.init();
+      // Remove all debris
+      debrisGroup.forEach(d => scene.remove(d.mesh));
+      debrisGroup.length = 0;
+
+      // Remove splash particles
+      splashParticles.forEach(p => scene.remove(p.mesh));
+      splashParticles.length = 0;
+
+      // Remove rigid parts
+      rigidDebris.forEach(r => {
+        scene.remove(r.mesh);
+        queueBodyRemoval(r.body);
+      });
+      rigidDebris.length = 0;
+
+      // Remove active bottles safely
+      activeBottles.forEach(b => {
+        b.isBroken = true;
+        scene.remove(b.mesh);
+        queueBodyRemoval(b.body);
+      });
+      activeBottles.length = 0;
+
+      // Reset default bottles on table
+      new Bottle('soy', -0.65, 0);
+      new Bottle('salt', 0.65, 0);
+    });
+
+    // Audio Mute Toggle
+    const btnAudio = document.getElementById('btn-audio');
+    const audioIcon = document.getElementById('audio-icon');
+    btnAudio.addEventListener('click', () => {
+      sound.init();
+      sound.enabled = !sound.enabled;
+      audioIcon.innerText = sound.enabled ? '🔊' : '🔇';
+    });
+
+    // Resize handler
+    window.addEventListener('resize', () => {
+      width = window.innerWidth;
+      height = window.innerHeight;
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      renderer.setSize(width, height);
+    });
+
+    // --- Initial Bottle Setup ---
+    new Bottle('soy', -0.65, 0.1);
+    new Bottle('salt', 0.65, -0.1);
+
+    // --- Main Render & Physics Simulation Loop ---
+    let lastTime = performance.now();
+    let cubeCamCounter = 0;
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const currentTime = performance.now();
+      const deltaSec = (currentTime - lastTime) / 1000;
+      lastTime = currentTime;
+
+      // Cannon.js physics step
+      const step = isSlowMotion ? 1 / 240 : 1 / 60;
+      world.step(step);
+
+      // Safely flush queued bodies to avoid mutating Cannon world arrays during internalStep
+      while (bodiesToRemove.length > 0) {
+        const bodyToRemove = bodiesToRemove.pop();
+        try {
+          if (typeof world.removeBody === 'function') {
+            world.removeBody(bodyToRemove);
+          } else if (typeof world.remove === 'function') {
+            world.remove(bodyToRemove);
+          }
+        } catch (err) {
+          console.warn('Physics removal warning:', err);
+        }
+      }
+
+      // Update active bottles position & orientation
+      for (let i = 0; i < activeBottles.length; i++) {
+        activeBottles[i].update();
+      }
+
+      // Update rigid surviving parts (caps & heavy bases)
+      for (let r = rigidDebris.length - 1; r >= 0; r--) {
+        const item = rigidDebris[r];
+        item.mesh.position.copy(item.body.position);
+        item.mesh.quaternion.copy(item.body.quaternion);
+        item.life -= item.decay;
+        if (item.life <= 0) {
+          scene.remove(item.mesh);
+          queueBodyRemoval(item.body);
+          rigidDebris.splice(r, 1);
+        }
+      }
+
+      // Update flying shards with realistic bounce
+      for (let j = debrisGroup.length - 1; j >= 0; j--) {
+        const item = debrisGroup[j];
+        if (!item.isFloor) {
+          // Physics motion
+          item.vel.y -= 15.0 * deltaSec * (isSlowMotion ? 0.25 : 1.0);
+          item.mesh.position.addScaledVector(item.vel, deltaSec * (isSlowMotion ? 0.25 : 1.0));
+
+          item.mesh.rotation.x += item.rotVel.x * deltaSec;
+          item.mesh.rotation.y += item.rotVel.y * deltaSec;
+          item.mesh.rotation.z += item.rotVel.z * deltaSec;
+
+          // Bounce off table with diminishing energy
+          if (item.mesh.position.y <= 0.02) {
+            item.mesh.position.y = 0.02;
+            item.vel.y = -item.vel.y * 0.32;
+            item.vel.x *= 0.65;
+            item.vel.z *= 0.65;
+            item.rotVel.multiplyScalar(0.5);
+
+            if (item.bounceCount < 2 && Math.abs(item.vel.y) > 0.4) {
+              item.bounceCount++;
+              if (Math.random() > 0.6) sound.playShardTinkle(0, 0.03);
+            }
+          }
+        }
+
+        // Fade out very old debris to ensure 60fps performance
+        item.life -= item.decay;
+        if (item.life <= 0) {
+          scene.remove(item.mesh);
+          debrisGroup.splice(j, 1);
+        }
+      }
+
+      // Update splash / powder particles
+      for (let k = splashParticles.length - 1; k >= 0; k--) {
+        const p = splashParticles[k];
+        const timeScale = isSlowMotion ? 0.25 : 1.0;
+        p.vel.y -= 14.0 * deltaSec * timeScale;
+        p.mesh.position.addScaledVector(p.vel, deltaSec * timeScale);
+
+        if (p.mesh.position.y <= 0.01) {
+          p.mesh.position.y = 0.01;
+          p.vel.set(0, 0, 0);
+          p.mesh.scale.multiplyScalar(0.96);
+        }
+
+        p.life -= p.decay * timeScale;
+        if (p.life <= 0) {
+          scene.remove(p.mesh);
+          splashParticles.splice(k, 1);
+        }
+      }
+
+      // Apply screen shake offset to camera
+      if (screenShakeIntensity > 0.001) {
+        const shakeX = (Math.random() - 0.5) * screenShakeIntensity;
+        const shakeY = (Math.random() - 0.5) * screenShakeIntensity;
+        camera.position.x += shakeX;
+        camera.position.y += shakeY;
+        screenShakeIntensity *= 0.88; // decay
+      }
+
+      // Periodically update environment cubemap for dynamic glass reflections
+      cubeCamCounter++;
+      if (cubeCamCounter % 25 === 0) {
+        glassMaterial.visible = false;
+        shardMaterial.visible = false;
+        cubeCamera.position.set(0, 1.2, 0);
+        cubeCamera.update(renderer, scene);
+        glassMaterial.visible = true;
+        shardMaterial.visible = true;
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    // Start simulation when page loads
+    window.onload = function () {
+      animate();
+    };
+  </script>
+</body>
+</html>
